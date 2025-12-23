@@ -2,16 +2,20 @@ local BASE_URL = "https://raw.githubusercontent.com/ivanoliverfabra/casino-cc/re
 
 local commonFiles = {
 	"gameLib/currency.lua",
-	"gameLib/deck.lua",
-	"gameLib/renderer.lua",
 	"gameLib/shrekbox.lua",
 	"gameLib/ui.lua",
+	"gameLib/bank.lua",
 }
 
 local presets = {
 	blackjack = {
 		"gameLib/games/blackjack.lua",
+		"gameLib/deck.lua",
+		"gameLib/renderer.lua",
 		"blackjack.lua",
+	},
+	atm = {
+		"atm.lua",
 	},
 }
 
