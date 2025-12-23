@@ -1,3 +1,5 @@
+local json = require("gameLib/json")
+
 local api = {}
 
 --- Helper to deeply merge defaults into the loaded config
@@ -31,7 +33,7 @@ function api.load(path, defaults)
 	local content = f.readAll()
 	f.close()
 
-	local data = textutils.unserializeJSON(content)
+	local data = json.decode(content)
 
 	-- If file is corrupt or empty, return defaults
 	if not data then
@@ -52,7 +54,7 @@ end
 --- @param data table
 function api.save(path, data)
 	local f = fs.open(path, "w")
-	f.write(textutils.serializeJSON(data))
+	f.write(json.encode(data))
 	f.close()
 end
 

@@ -6,6 +6,7 @@ local commonFiles = {
 	"gameLib/ui.lua",
 	"gameLib/bank.lua",
 	"gameLib/config.lua",
+	"gameLib/json.lua",
 }
 
 local presets = {
