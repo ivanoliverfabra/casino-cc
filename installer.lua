@@ -1,32 +1,26 @@
-local baseUrl = "https://p.reconnected.cc/raw/"
+local BASE_URL = "https://raw.githubusercontent.com/ivanoliverfabra/casino-cc/refs/heads/main/"
 
-local libraryFiles = {
-	{ path = "gameLib/currency.lua", id = "VaiUlSmhm" },
-	{ path = "gameLib/deck.lua", id = "HdroKcLfY" },
-	{ path = "gameLib/renderer.lua", id = "vhbtjMfOa" },
-	{
-		path = "gameLib/shrekbox.lua",
-		id = "https://codeberg.org/ShreksHellraiser/shrekbox/raw/commit/fea1b8c82a1f73284c9e92b3cac63ee1f5e9e1e2/shrekbox.lua",
-	},
-	{ path = "gameLib/ui.lua", id = "MWErGEScu" },
+local commonFiles = {
+	"gameLib/currency.lua",
+	"gameLib/deck.lua",
+	"gameLib/renderer.lua",
+	"gameLib/shrekbox.lua",
+	"gameLib/ui.lua",
 }
 
 local presets = {
 	blackjack = {
-		{ path = "gameLib/games/blackjack.lua", id = "EcNnsaScY" },
-		{ path = "blackjack.lua", id = "dALYoZirF" },
+		"gameLib/games/blackjack.lua",
+		"blackjack.lua",
 	},
 }
-
-local function isUrl(path)
-	return path:match("^https?://") ~= nil
-end
 
 local function getDir(path)
 	return path:match("(.*/)") or ""
 end
 
 local function download(url)
+	print("Downloading " .. url)
 	local resp, err = http.get(url)
 	if not resp then
 		return nil, err
@@ -36,60 +30,67 @@ local function download(url)
 	return content
 end
 
-local function installFile(file)
-	local url = isUrl(file.id) and file.id or (baseUrl .. file.id)
-	print("Downloading " .. file.path)
+local function install(path)
+	local url = BASE_URL .. path
 
-	local body, err = download(url)
-	if not body then
-		printError("Failed to fetch " .. file.path .. ": " .. tostring(err))
+	-- Support for absolute URLs if specific libraries need to be pulled from elsewhere
+	if path:match("^https?://") then
+		url = path
+		-- Extract filename from URL for local saving if strictly a URL is passed (edge case)
+		-- But assuming the list contains relative paths based on the prompt
+		path = path:match(".*/(.*)")
+	end
+
+	local content, err = download(url)
+	if not content then
+		printError("Failed: " .. tostring(err))
 		return false
 	end
 
-	local dir = getDir(file.path)
+	local dir = getDir(path)
 	if dir ~= "" and not fs.exists(dir) then
 		fs.makeDir(dir)
 	end
 
-	local f = fs.open(file.path, "w")
-	f.write(body)
+	local f = fs.open(path, "w")
+	f.write(content)
 	f.close()
 	return true
 end
 
 local args = { ... }
-local selectedPreset = args[1]
+local selected = args[1]
 
-if not selectedPreset then
-	print("Available Presets:")
-	for k, v in pairs(presets) do
+if not selected then
+	print("Available presets:")
+	for k in pairs(presets) do
 		print(" - " .. k)
 	end
 	write("Select preset: ")
-	selectedPreset = read()
+	selected = read()
 end
 
-local files = presets[selectedPreset]
-for k, v in pairs(libraryFiles) do
-	table.insert(files, v)
-end
-
+local files = presets[selected]
 if not files then
-	printError("Preset not found: " .. tostring(selectedPreset))
+	printError("Invalid preset.")
 	return
 end
 
-print("Installing " .. selectedPreset .. "...")
+-- Combine common files and preset files
+local installList = {}
+for _, v in ipairs(commonFiles) do
+	table.insert(installList, v)
+end
+for _, v in ipairs(files) do
+	table.insert(installList, v)
+end
+
 local count = 0
-for _, file in ipairs(files) do
-	if file.id ~= "" then
-		if installFile(file) then
-			count = count + 1
-		end
-	else
-		printError("Skipping " .. file.path .. " (No ID)")
+for _, path in ipairs(installList) do
+	if install(path) then
+		count = count + 1
 	end
 	sleep(0.1)
 end
 
-print("Installed " .. count .. "/" .. #files .. " files.")
+print("Installed " .. count .. "/" .. #installList .. " files.")
