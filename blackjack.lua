@@ -332,7 +332,7 @@ local function updateUI(revealDealer)
 	-- === GAMEPLAY SCREEN ===
 	elseif state == "PLAYING" or state == "GAMEOVER" then
 		-- Dealer
-		local dY = 6
+		local dY = 3
 		local dWidth = getHandWidth(#game.dealerHand.cards, false)
 		local dX = math.floor((w - dWidth) / 2)
 
@@ -347,7 +347,7 @@ local function updateUI(revealDealer)
 		end
 
 		-- Players
-		local pY = 23
+		local pY = 20
 		local totalHands = #game.playerHands
 		local handSpacing = 15
 		local totalGroupWidth = 0
