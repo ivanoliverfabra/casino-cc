@@ -1,23 +1,29 @@
 local BASE_URL = "https://raw.githubusercontent.com/ivanoliverfabra/casino-cc/refs/heads/main/"
 
-local commonFiles = {
-	"gameLib/currency.lua",
-	"gameLib/shrekbox.lua",
-	"gameLib/ui.lua",
-	"gameLib/bank.lua",
-	"gameLib/config.lua",
-	"gameLib/json.lua",
-}
-
 local presets = {
 	blackjack = {
 		"gameLib/games/blackjack.lua",
 		"gameLib/deck.lua",
 		"gameLib/renderer.lua",
+		"gameLib/currency.lua",
+		"gameLib/shrekbox.lua",
+		"gameLib/ui.lua",
+		"gameLib/bank.lua",
+		"gameLib/config.lua",
+		"gameLib/json.lua",
 		"blackjack.lua",
 	},
 	atm = {
+		"gameLib/currency.lua",
+		"gameLib/shrekbox.lua",
+		"gameLib/ui.lua",
+		"gameLib/bank.lua",
+		"gameLib/config.lua",
+		"gameLib/json.lua",
 		"atm.lua",
+	},
+	music = {
+		"music.lua",
 	},
 }
 
@@ -82,21 +88,12 @@ if not files then
 	return
 end
 
--- Combine common files and preset files
-local installList = {}
-for _, v in ipairs(commonFiles) do
-	table.insert(installList, v)
-end
-for _, v in ipairs(files) do
-	table.insert(installList, v)
-end
-
 local count = 0
-for _, path in ipairs(installList) do
+for _, path in ipairs(files) do
 	if install(path) then
 		count = count + 1
 	end
 	sleep(0.1)
 end
 
-print("Installed " .. count .. "/" .. #installList .. " files.")
+print("Installed " .. count .. "/" .. #files .. " files.")
