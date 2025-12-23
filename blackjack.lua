@@ -213,10 +213,11 @@ end
 
 local function appendBet(digit)
 	local newVal = (currentBet * 10) + digit
-	if newVal <= currentUser.balance then
+	local maxBet = math.min(currentUser.balance, cfg.game.max_bet)
+	if newVal <= maxBet then
 		currentBet = newVal
 	else
-		currentBet = currentUser.balance
+		currentBet = maxBet
 	end
 end
 
@@ -457,7 +458,7 @@ local function updateUI(revealDealer)
 				function()
 					state = "BETTING"
 					if currentBet > currentUser.balance then
-						currentBet = currentUser.balance
+						currentBet = math.min(currentUser.balance, cfg.game.max_bet)
 					end
 				end
 			)
@@ -512,7 +513,7 @@ local function loopUI()
 			elseif state == "GAMEOVER" and ev[2] == keys.enter then
 				state = "BETTING"
 				if currentBet > currentUser.balance then
-					currentBet = currentUser.balance
+					currentBet = math.min(currentUser.balance, cfg.game.max_bet)
 				end
 			end
 		end
