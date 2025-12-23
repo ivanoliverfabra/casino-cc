@@ -243,7 +243,7 @@ local function updateUI(revealDealer)
 	-- === BETTING SCREEN ===
 	if state == "BETTING" then
 		local cx = math.floor(w / 2)
-		local cy = math.floor(h / 2)
+		local cy = math.floor(h / 2) - 4
 
 		drawCenteredText(cy - 8, "PLACE YOUR BET", cfg.colors.subtext, cfg.colors.bg)
 

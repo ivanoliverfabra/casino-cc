@@ -223,7 +223,7 @@ local function updateUI()
 			processing = false
 		end)
 
-		layers.ui:addButton(cx, 15, btnW, 3, "WITHDRAW...", colors.orange, cfg.colors.button_text, function()
+		layers.ui:addButton(cx, 15, btnW, 3, "WITHDRAW", colors.orange, cfg.colors.button_text, function()
 			state = "WITHDRAW"
 			message = ""
 		end)
