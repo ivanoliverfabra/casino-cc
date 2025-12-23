@@ -24,6 +24,10 @@ local DEFAULT_SETTINGS = {
 		button = colors.gray,
 		button_text = colors.white,
 	},
+	game = {
+		max_bet = 4096,
+		min_bet = 1,
+	},
 }
 
 local cfg = config.load("blackjack_config.json", DEFAULT_SETTINGS)
@@ -121,8 +125,13 @@ local function startNewGame()
 		return
 	end
 
-	if currentBet <= 0 then
-		message = "Enter a bet!"
+	if currentBet < cfg.game.min_bet then
+		message = "Minimum bet is $" .. tostring(cfg.game.min_bet)
+		return
+	end
+
+	if currentBet > cfg.game.max_bet then
+		message = "Maximum bet is $" .. tostring(cfg.game.max_bet)
 		return
 	end
 
@@ -347,7 +356,7 @@ local function updateUI(revealDealer)
 		end
 
 		-- Players
-		local pY = 18
+		local pY = h - 30
 		local totalHands = #game.playerHands
 		local handSpacing = 15
 		local totalGroupWidth = 0
