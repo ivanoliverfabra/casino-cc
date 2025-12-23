@@ -4,7 +4,6 @@ local shrekbox = require("gameLib.shrekbox")
 local currency = require("gameLib.currency")
 local config = require("gameLib.config")
 
--- === CONFIGURATION DEFAULTS ===
 local DEFAULT_SETTINGS = {
 	bank = {
 		url = "http://localhost:3000",
@@ -27,10 +26,8 @@ local DEFAULT_SETTINGS = {
 	},
 }
 
--- Load Config
 local cfg = config.load("atm_config.json", DEFAULT_SETTINGS)
 
--- === PERIPHERALS ===
 local detector = peripheral.find("playerDetector")
 if not detector then
 	error("Player Detector not found!")
@@ -42,7 +39,6 @@ if not monitor then
 end
 monitor.setTextScale(cfg.peripherals.monitor_scale)
 
--- Inventory Setup
 local buffer = peripheral.wrap(cfg.peripherals.buffer_chest)
 if not buffer then
 	error("Buffer chest not found at '" .. cfg.peripherals.buffer_chest .. "'")
@@ -53,7 +49,6 @@ if not vault then
 	error("Vault chest not found at '" .. cfg.peripherals.vault_chest .. "'")
 end
 
--- === SETUP ===
 local w, h = monitor.getSize()
 local win = window.create(monitor, 1, 1, w, h)
 local box = shrekbox.new(win)
@@ -64,15 +59,11 @@ local layers = {
 	ui = ui.new(box.add_text_layer(150, "ui_layer")),
 }
 
--- === STATE ===
 local state = "IDLE"
 local currentUser = nil
 local message = ""
 local processing = false
 
--- === INVENTORY LOGIC ===
-
--- Returns a table: { ["numismatics:sun"] = 50, ... }
 local function getVaultCounts()
 	local counts = {}
 	for _, item in pairs(vault.list()) do
@@ -81,7 +72,6 @@ local function getVaultCounts()
 	return counts
 end
 
--- Moves items Buffer -> Vault, returns total value found
 local function processPhysicalDeposit()
 	local totalValue = 0
 	local itemsMoved = 0
@@ -99,13 +89,9 @@ local function processPhysicalDeposit()
 	return totalValue, itemsMoved
 end
 
--- Moves items Vault -> Buffer, ONLY what is available
--- Returns: success (bool), value_dispensed (number)
 local function processPhysicalWithdraw(requestedAmount)
-	-- 1. Snapshot Vault
 	local vaultCounts = getVaultCounts()
 
-	-- 2. Sort coins High -> Low
 	local sortedCoins = {}
 	for _, c in ipairs(currency.COINS) do
 		table.insert(sortedCoins, c)
@@ -114,8 +100,7 @@ local function processPhysicalWithdraw(requestedAmount)
 		return a.value > b.value
 	end)
 
-	-- 3. Calculate Plan (Greedy approach limited by stock)
-	local plan = {} -- { ["coin_id"] = count_to_take }
+	local plan = {}
 	local remainingReq = requestedAmount
 	local totalDispenseValue = 0
 
@@ -136,10 +121,9 @@ local function processPhysicalWithdraw(requestedAmount)
 	end
 
 	if totalDispenseValue == 0 then
-		return false, 0 -- ATM Empty or cannot make change
+		return false, 0
 	end
 
-	-- 4. Execute Plan (Move items)
 	for coinId, countToMove in pairs(plan) do
 		local needed = countToMove
 		for slot, item in pairs(vault.list()) do
@@ -156,8 +140,6 @@ local function processPhysicalWithdraw(requestedAmount)
 
 	return true, totalDispenseValue
 end
-
--- === AUTH & API ===
 
 local function loginUser(username)
 	message = "Connecting..."
@@ -176,7 +158,6 @@ local function loginUser(username)
 		message = ""
 	else
 		state = "IDLE"
-		-- Error stays on screen for next idle loop
 	end
 end
 
@@ -189,8 +170,6 @@ local function refreshBalance()
 		currentUser.balance = data.balance
 	end
 end
-
--- === UI RENDERER ===
 
 local function drawCentered(y, text, fg, bg)
 	local x = math.floor((w - #text) / 2)
@@ -221,7 +200,6 @@ local function updateUI()
 		local btnW = 18
 		local cx = math.floor(w / 2 - btnW / 2)
 
-		-- Deposit Button
 		layers.ui:addButton(cx, 11, btnW, 3, "DEPOSIT ALL", cfg.colors.success, cfg.colors.button_text, function()
 			if processing then
 				return
@@ -245,13 +223,11 @@ local function updateUI()
 			processing = false
 		end)
 
-		-- Withdraw Button
 		layers.ui:addButton(cx, 15, btnW, 3, "WITHDRAW...", colors.orange, cfg.colors.button_text, function()
 			state = "WITHDRAW"
 			message = ""
 		end)
 
-		-- Logout Button
 		layers.ui:addButton(cx, 21, btnW, 3, "LOGOUT", cfg.colors.error, cfg.colors.button_text, function()
 			state = "IDLE"
 			currentUser = nil
@@ -263,7 +239,7 @@ local function updateUI()
 			drawCentered(5, message, cfg.colors.subtext, cfg.colors.bg)
 		end
 
-		local amounts = { 10, 50, 100, 500, 1000, 5000 }
+		local amounts = { 8, 32, 64, 256, 512, 4096 }
 
 		local startX = 3
 		local startY = 7
@@ -275,10 +251,8 @@ local function updateUI()
 			local x = math.floor(w / 2) + (col == 0 and -(btnW + 1) or 1)
 			local y = startY + (row * 4)
 
-			-- Logic: Can user afford this specific amount?
 			local canAfford = currentUser.balance >= amt
 
-			-- Visuals based on affordability
 			local bCol = canAfford and cfg.colors.button or colors.lightGray
 			local tCol = canAfford and cfg.colors.button_text or colors.gray
 
@@ -291,11 +265,9 @@ local function updateUI()
 				message = "Checking stock..."
 				updateUI()
 
-				-- 1. Attempt Physical Move (Returns exact amount moved)
 				local success, dispensedAmount = processPhysicalWithdraw(amt)
 
 				if success and dispensedAmount > 0 then
-					-- 2. Deduct only what was dispensed
 					local apiSuccess, apiErr = bank.withdraw(currentUser.username, dispensedAmount)
 
 					if apiSuccess then
@@ -307,8 +279,6 @@ local function updateUI()
 							message = "Withdrawn $" .. dispensedAmount
 						end
 					else
-						-- Critical Failure: Money dispensed but API failed.
-						-- In production, you'd log this to a file.
 						message = "API Error: " .. tostring(apiErr)
 					end
 				else
@@ -327,8 +297,6 @@ local function updateUI()
 	layers.ui:render()
 	box.render()
 end
-
--- === EVENT LOOPS ===
 
 local function loopClicks()
 	while true do
