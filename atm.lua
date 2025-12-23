@@ -2,10 +2,33 @@ local bank = require("gameLib.bank")
 local ui = require("gameLib.ui")
 local shrekbox = require("gameLib.shrekbox")
 local currency = require("gameLib.currency")
+local config = require("gameLib.config")
 
--- === CONFIGURATION ===
-local BANK_URL = "http://localhost:3000"
-local BANK_KEY = "sk_casino_super_secret_key"
+-- === CONFIGURATION DEFAULTS ===
+local DEFAULT_SETTINGS = {
+	bank = {
+		url = "http://localhost:3000",
+		key = "sk_casino_super_secret_key",
+	},
+	peripherals = {
+		buffer_chest = "top", -- Where player puts items
+		vault_chest = "back", -- Secure storage
+		monitor_scale = 0.5,
+	},
+	colors = {
+		bg = colors.black,
+		text = colors.white,
+		accent = colors.yellow,
+		subtext = colors.lightGray,
+		error = colors.red,
+		success = colors.green,
+		button = colors.gray,
+		button_text = colors.white,
+	},
+}
+
+-- Load Config
+local cfg = config.load("atm_config.json", DEFAULT_SETTINGS)
 
 -- === PERIPHERALS ===
 local detector = peripheral.find("playerDetector")
@@ -17,26 +40,25 @@ local monitor = peripheral.find("monitor")
 if not monitor then
 	error("Monitor not found!")
 end
-monitor.setTextScale(0.5)
+monitor.setTextScale(cfg.peripherals.monitor_scale)
 
 -- Inventory Setup
--- 'buffer': The chest the player accesses
--- 'vault': The secure storage (connect via modem)
-local buffer = peripheral.wrap("top") -- Adjust side (top, bottom, left, right)
-local vault = peripheral.wrap("back") -- Adjust side or use name "minecraft:chest_5"
-
+local buffer = peripheral.wrap(cfg.peripherals.buffer_chest)
 if not buffer then
-	error("Buffer chest not found (top)!")
-end
-if not vault then
-	error("Vault chest not found (back/modem)!")
+	error("Buffer chest not found at '" .. cfg.peripherals.buffer_chest .. "'")
 end
 
--- === DISPLAY SETUP ===
+local vault = peripheral.wrap(cfg.peripherals.vault_chest)
+if not vault then
+	error("Vault chest not found at '" .. cfg.peripherals.vault_chest .. "'")
+end
+
+-- === SETUP ===
 local w, h = monitor.getSize()
 local win = window.create(monitor, 1, 1, w, h)
 local box = shrekbox.new(win)
-bank.setup(BANK_URL, BANK_KEY)
+
+bank.setup(cfg.bank.url, cfg.bank.key)
 
 local layers = {
 	ui = ui.new(box.add_text_layer(150, "ui_layer")),
@@ -48,65 +70,95 @@ local currentUser = nil
 local message = ""
 local processing = false
 
--- === PHYSICAL ITEM LOGIC ===
+-- === INVENTORY LOGIC ===
 
--- Moves items from Buffer -> Vault and returns total value found
+-- Returns a table: { ["numismatics:sun"] = 50, ... }
+local function getVaultCounts()
+	local counts = {}
+	for _, item in pairs(vault.list()) do
+		counts[item.name] = (counts[item.name] or 0) + item.count
+	end
+	return counts
+end
+
+-- Moves items Buffer -> Vault, returns total value found
 local function processPhysicalDeposit()
 	local totalValue = 0
 	local itemsMoved = 0
 
-	-- Scan buffer chest
 	for slot, item in pairs(buffer.list()) do
 		local val = currency.getValue(item.name)
 		if val > 0 then
-			-- It's a valid coin
 			local pushed = buffer.pushItems(peripheral.getName(vault), slot)
 			if pushed > 0 then
 				totalValue = totalValue + (val * pushed)
 				itemsMoved = itemsMoved + pushed
 			end
-		else
-			-- Optional: Eject invalid items? For now we just ignore them
 		end
 	end
-
 	return totalValue, itemsMoved
 end
 
--- Moves items from Vault -> Buffer based on amount
-local function processPhysicalWithdraw(amount)
-	-- 1. Calculate what items we need
-	local coinsNeeded = currency.breakdown(amount)
-	local movedValue = 0
+-- Moves items Vault -> Buffer, ONLY what is available
+-- Returns: success (bool), value_dispensed (number)
+local function processPhysicalWithdraw(requestedAmount)
+	-- 1. Snapshot Vault
+	local vaultCounts = getVaultCounts()
 
-	-- 2. Find and move them from vault
-	for _, need in ipairs(coinsNeeded) do
-		local remainingCount = need.count
+	-- 2. Sort coins High -> Low
+	local sortedCoins = {}
+	for _, c in ipairs(currency.COINS) do
+		table.insert(sortedCoins, c)
+	end
+	table.sort(sortedCoins, function(a, b)
+		return a.value > b.value
+	end)
 
-		-- Scan vault for this specific item
+	-- 3. Calculate Plan (Greedy approach limited by stock)
+	local plan = {} -- { ["coin_id"] = count_to_take }
+	local remainingReq = requestedAmount
+	local totalDispenseValue = 0
+
+	for _, coin in ipairs(sortedCoins) do
+		if remainingReq >= coin.value then
+			local inStock = vaultCounts[coin.mod_id] or 0
+			if inStock > 0 then
+				local needed = math.floor(remainingReq / coin.value)
+				local take = math.min(needed, inStock)
+
+				if take > 0 then
+					plan[coin.mod_id] = take
+					remainingReq = remainingReq - (take * coin.value)
+					totalDispenseValue = totalDispenseValue + (take * coin.value)
+				end
+			end
+		end
+	end
+
+	if totalDispenseValue == 0 then
+		return false, 0 -- ATM Empty or cannot make change
+	end
+
+	-- 4. Execute Plan (Move items)
+	for coinId, countToMove in pairs(plan) do
+		local needed = countToMove
 		for slot, item in pairs(vault.list()) do
-			if item.name == need.coin.mod_id then
-				local limit = math.min(item.count, remainingCount)
+			if item.name == coinId then
+				local limit = math.min(item.count, needed)
 				local pushed = vault.pushItems(peripheral.getName(buffer), slot, limit)
-
-				remainingCount = remainingCount - pushed
-				movedValue = movedValue + (pushed * need.coin.value)
-
-				if remainingCount <= 0 then
+				needed = needed - pushed
+				if needed <= 0 then
 					break
 				end
 			end
 		end
-
-		if remainingCount > 0 then
-			return false, "Vault low on " .. need.coin.name
-		end
 	end
 
-	return true, movedValue
+	return true, totalDispenseValue
 end
 
--- === AUTH HELPER ===
+-- === AUTH & API ===
+
 local function loginUser(username)
 	message = "Connecting..."
 	local ok, data = bank.getUser(username)
@@ -119,15 +171,12 @@ local function loginUser(username)
 	end
 
 	if ok then
-		currentUser = {
-			username = data.username or username,
-			balance = data.balance,
-		}
+		currentUser = { username = data.username or username, balance = data.balance }
 		state = "MENU"
 		message = ""
 	else
 		state = "IDLE"
-		print("Login Error: " .. tostring(data))
+		-- Error stays on screen for next idle loop
 	end
 end
 
@@ -142,6 +191,7 @@ local function refreshBalance()
 end
 
 -- === UI RENDERER ===
+
 local function drawCentered(y, text, fg, bg)
 	local x = math.floor((w - #text) / 2)
 	layers.ui:addLabel(x, y, text, fg, bg)
@@ -150,44 +200,44 @@ end
 local function updateUI()
 	layers.ui.layer.clear()
 	layers.ui:clear()
-	box.fill(colors.black)
+	box.fill(cfg.colors.bg)
 
 	if state == "IDLE" then
-		drawCentered(h / 2 - 2, "CASINO ATM", colors.yellow, colors.black)
-		drawCentered(h / 2, "CLICK BLOCK TO LOGIN", colors.white, colors.black)
+		drawCentered(h / 2 - 2, "CASINO ATM", cfg.colors.accent, cfg.colors.bg)
+		drawCentered(h / 2, "CLICK BLOCK TO LOGIN", cfg.colors.text, cfg.colors.bg)
 		if message ~= "" then
-			drawCentered(h / 2 + 4, message, colors.red, colors.black)
+			drawCentered(h / 2 + 4, message, cfg.colors.subtext, cfg.colors.bg)
 		end
 	elseif state == "MENU" then
-		layers.ui:addLabel(2, 2, "USER: " .. currentUser.username, colors.white, colors.black)
-		drawCentered(4, "BALANCE", colors.lightGray, colors.black)
-		drawCentered(6, "$" .. tostring(currentUser.balance), colors.yellow, colors.black)
+		layers.ui:addLabel(2, 2, "USER: " .. currentUser.username, cfg.colors.text, cfg.colors.bg)
+
+		drawCentered(4, "BALANCE", cfg.colors.subtext, cfg.colors.bg)
+		drawCentered(6, "$" .. tostring(currentUser.balance), cfg.colors.accent, cfg.colors.bg)
 
 		if message ~= "" then
-			drawCentered(8, message, colors.cyan, colors.black)
+			drawCentered(8, message, cfg.colors.text, cfg.colors.bg)
 		end
 
 		local btnW = 18
 		local cx = math.floor(w / 2 - btnW / 2)
 
-		layers.ui:addButton(cx, 11, btnW, 3, "DEPOSIT ALL", colors.green, colors.white, function()
+		-- Deposit Button
+		layers.ui:addButton(cx, 11, btnW, 3, "DEPOSIT ALL", cfg.colors.success, cfg.colors.button_text, function()
 			if processing then
 				return
 			end
 			processing = true
-			message = "Scanning items..."
-			updateUI() -- Update screen immediately
+			message = "Scanning..."
+			updateUI()
 
-			local val, count = processPhysicalDeposit()
-
+			local val, _ = processPhysicalDeposit()
 			if val > 0 then
 				local success, err = bank.deposit(currentUser.username, val)
 				if success then
 					refreshBalance()
 					message = "Deposited $" .. val
 				else
-					message = "API Error: " .. tostring(err)
-					-- Ideally move items back here, but simplified for now
+					message = "API Error: " .. tostring(err.message or err)
 				end
 			else
 				message = "No valid coins found."
@@ -195,75 +245,80 @@ local function updateUI()
 			processing = false
 		end)
 
-		layers.ui:addButton(cx, 15, btnW, 3, "WITHDRAW...", colors.orange, colors.black, function()
+		-- Withdraw Button
+		layers.ui:addButton(cx, 15, btnW, 3, "WITHDRAW...", colors.orange, cfg.colors.button_text, function()
 			state = "WITHDRAW"
 			message = ""
 		end)
 
-		layers.ui:addButton(cx, 21, btnW, 3, "LOGOUT", colors.red, colors.white, function()
+		-- Logout Button
+		layers.ui:addButton(cx, 21, btnW, 3, "LOGOUT", cfg.colors.error, cfg.colors.button_text, function()
 			state = "IDLE"
 			currentUser = nil
 			message = ""
 		end)
 	elseif state == "WITHDRAW" then
-		drawCentered(3, "Select Amount", colors.white, colors.black)
+		drawCentered(3, "Select Amount", cfg.colors.text, cfg.colors.bg)
 		if message ~= "" then
-			drawCentered(5, message, colors.red, colors.black)
+			drawCentered(5, message, cfg.colors.subtext, cfg.colors.bg)
 		end
 
 		local amounts = { 10, 50, 100, 500, 1000, 5000 }
 
-		-- Grid for amounts
 		local startX = 3
 		local startY = 7
 		local btnW = 10
-		local gap = 1
 
 		for i, amt in ipairs(amounts) do
 			local col = (i - 1) % 2
 			local row = math.floor((i - 1) / 2)
-
 			local x = math.floor(w / 2) + (col == 0 and -(btnW + 1) or 1)
 			local y = startY + (row * 4)
 
-			layers.ui:addButton(x, y, btnW, 3, "$" .. amt, colors.gray, colors.white, function()
-				if processing then
+			-- Logic: Can user afford this specific amount?
+			local canAfford = currentUser.balance >= amt
+
+			-- Visuals based on affordability
+			local bCol = canAfford and cfg.colors.button or colors.lightGray
+			local tCol = canAfford and cfg.colors.button_text or colors.gray
+
+			layers.ui:addButton(x, y, btnW, 3, "$" .. amt, bCol, tCol, function()
+				if not canAfford or processing then
 					return
 				end
+
 				processing = true
-				message = "Dispensing..."
+				message = "Checking stock..."
 				updateUI()
 
-				-- 1. Check API Balance first
-				if currentUser.balance < amt then
-					message = "Insufficient funds!"
-					processing = false
-					return
-				end
+				-- 1. Attempt Physical Move (Returns exact amount moved)
+				local success, dispensedAmount = processPhysicalWithdraw(amt)
 
-				-- 2. Try moving items
-				local moved, valOrErr = processPhysicalWithdraw(amt)
+				if success and dispensedAmount > 0 then
+					-- 2. Deduct only what was dispensed
+					local apiSuccess, apiErr = bank.withdraw(currentUser.username, dispensedAmount)
 
-				if moved then
-					-- 3. Deduct from Bank
-					local success, apiErr = bank.withdraw(currentUser.username, amt)
-					if success then
+					if apiSuccess then
 						refreshBalance()
 						state = "MENU"
-						message = "Withdrawn $" .. amt
+						if dispensedAmount < amt then
+							message = "ATM Low. Dispensed $" .. dispensedAmount
+						else
+							message = "Withdrawn $" .. dispensedAmount
+						end
 					else
+						-- Critical Failure: Money dispensed but API failed.
+						-- In production, you'd log this to a file.
 						message = "API Error: " .. tostring(apiErr)
-						-- Items dispensed but API failed.
-						-- In real world, log this critical error.
 					end
 				else
-					message = "ATM Empty: " .. tostring(valOrErr)
+					message = "ATM Empty."
 				end
 				processing = false
 			end)
 		end
 
-		layers.ui:addButton(2, h - 4, 8, 3, "BACK", colors.red, colors.white, function()
+		layers.ui:addButton(2, h - 4, 8, 3, "BACK", cfg.colors.error, cfg.colors.button_text, function()
 			state = "MENU"
 			message = ""
 		end)
@@ -273,7 +328,8 @@ local function updateUI()
 	box.render()
 end
 
--- === LOOPS ===
+-- === EVENT LOOPS ===
+
 local function loopClicks()
 	while true do
 		local event, username = os.pullEvent("playerClick")

@@ -5,6 +5,7 @@ local commonFiles = {
 	"gameLib/shrekbox.lua",
 	"gameLib/ui.lua",
 	"gameLib/bank.lua",
+	"gameLib/config.lua",
 }
 
 local presets = {
