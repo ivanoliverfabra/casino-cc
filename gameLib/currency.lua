@@ -84,6 +84,41 @@ function api.format(amount)
 	return table.concat(strParts, ", ")
 end
 
+--- @param requestedAmount number
+--- @param availableCounts table<string, number>
+--- @return table<string, number>, number
+function api.planDispense(requestedAmount, availableCounts)
+	local plan = {}
+	local remainingReq = requestedAmount
+	local totalDispenseValue = 0
+
+	local sortedCoins = {}
+	for _, c in ipairs(COINS) do
+		table.insert(sortedCoins, c)
+	end
+	table.sort(sortedCoins, function(a, b)
+		return a.value > b.value
+	end)
+
+	for _, coin in ipairs(sortedCoins) do
+		if remainingReq >= coin.value then
+			local inStock = availableCounts[coin.mod_id] or 0
+			if inStock > 0 then
+				local needed = math.floor(remainingReq / coin.value)
+				local take = math.min(needed, inStock)
+
+				if take > 0 then
+					plan[coin.mod_id] = take
+					remainingReq = remainingReq - (take * coin.value)
+					totalDispenseValue = totalDispenseValue + (take * coin.value)
+				end
+			end
+		end
+	end
+
+	return plan, totalDispenseValue
+end
+
 --- @param initialBalance number?
 --- @return Wallet
 function api.newWallet(initialBalance)

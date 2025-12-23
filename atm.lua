@@ -89,36 +89,13 @@ local function processPhysicalDeposit()
 	return totalValue, itemsMoved
 end
 
+local function calculateDispensableAmount(requestedAmount)
+	local plan, totalDispenseValue = currency.planDispense(requestedAmount, getVaultCounts())
+	return totalDispenseValue
+end
+
 local function processPhysicalWithdraw(requestedAmount)
-	local vaultCounts = getVaultCounts()
-
-	local sortedCoins = {}
-	for _, c in ipairs(currency.COINS) do
-		table.insert(sortedCoins, c)
-	end
-	table.sort(sortedCoins, function(a, b)
-		return a.value > b.value
-	end)
-
-	local plan = {}
-	local remainingReq = requestedAmount
-	local totalDispenseValue = 0
-
-	for _, coin in ipairs(sortedCoins) do
-		if remainingReq >= coin.value then
-			local inStock = vaultCounts[coin.mod_id] or 0
-			if inStock > 0 then
-				local needed = math.floor(remainingReq / coin.value)
-				local take = math.min(needed, inStock)
-
-				if take > 0 then
-					plan[coin.mod_id] = take
-					remainingReq = remainingReq - (take * coin.value)
-					totalDispenseValue = totalDispenseValue + (take * coin.value)
-				end
-			end
-		end
-	end
+	local plan, totalDispenseValue = currency.planDispense(requestedAmount, getVaultCounts())
 
 	if totalDispenseValue == 0 then
 		return false, 0
@@ -265,12 +242,13 @@ local function updateUI()
 				message = "Checking stock..."
 				updateUI()
 
-				local success, dispensedAmount = processPhysicalWithdraw(amt)
+				local dispensableAmount = calculateDispensableAmount(amt)
+				local apiSuccess, apiErr = bank.withdraw(currentUser.username, dispensableAmount)
 
-				if success and dispensedAmount > 0 then
-					local apiSuccess, apiErr = bank.withdraw(currentUser.username, dispensedAmount)
+				if apiSuccess then
+					local success, dispensedAmount = processPhysicalWithdraw(amt)
 
-					if apiSuccess then
+					if success then
 						refreshBalance()
 						state = "MENU"
 						if dispensedAmount < amt then
