@@ -54,7 +54,7 @@ end
 --- @param data table
 function api.save(path, data)
 	local f = fs.open(path, "w")
-	f.write(json.encode(data))
+	f.write(json.encode(data, "  "))
 	f.close()
 end
 
