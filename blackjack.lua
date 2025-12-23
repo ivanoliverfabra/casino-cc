@@ -315,7 +315,7 @@ local function updateUI(revealDealer)
 			colors.orange,
 			cfg.colors.button_text,
 			function()
-				currentBet = currentUser.balance
+				currentBet = math.min(currentUser.balance, cfg.game.max_bet)
 			end
 		)
 
