@@ -1,10 +1,10 @@
 local bank = require("gameLib.bank")
 local ui = require("gameLib.ui")
 local shrekbox = require("gameLib.shrekbox")
+local currency = require("gameLib.currency")
 
 -- === CONFIGURATION ===
--- Ensure you have 'set allow_http true' in ComputerCraft config
-local BANK_URL = "http://localhost:3000" -- Use your host IP if not using a tunnel
+local BANK_URL = "http://localhost:3000"
 local BANK_KEY = "sk_casino_super_secret_key"
 
 -- === PERIPHERALS ===
@@ -19,31 +19,99 @@ if not monitor then
 end
 monitor.setTextScale(0.5)
 
+-- Inventory Setup
+-- 'buffer': The chest the player accesses
+-- 'vault': The secure storage (connect via modem)
+local buffer = peripheral.wrap("top") -- Adjust side (top, bottom, left, right)
+local vault = peripheral.wrap("back") -- Adjust side or use name "minecraft:chest_5"
+
+if not buffer then
+	error("Buffer chest not found (top)!")
+end
+if not vault then
+	error("Vault chest not found (back/modem)!")
+end
+
+-- === DISPLAY SETUP ===
 local w, h = monitor.getSize()
 local win = window.create(monitor, 1, 1, w, h)
 local box = shrekbox.new(win)
-
--- === SETUP ===
 bank.setup(BANK_URL, BANK_KEY)
 
 local layers = {
 	ui = ui.new(box.add_text_layer(150, "ui_layer")),
 }
 
--- === STATE MANAGEMENT ===
-local state = "IDLE" -- IDLE, MENU, DEPOSIT, WITHDRAW
-local currentUser = nil -- { username, balance }
-local inputAmount = 0
+-- === STATE ===
+local state = "IDLE"
+local currentUser = nil
 local message = ""
+local processing = false
 
--- === API HELPERS ===
+-- === PHYSICAL ITEM LOGIC ===
+
+-- Moves items from Buffer -> Vault and returns total value found
+local function processPhysicalDeposit()
+	local totalValue = 0
+	local itemsMoved = 0
+
+	-- Scan buffer chest
+	for slot, item in pairs(buffer.list()) do
+		local val = currency.getValue(item.name)
+		if val > 0 then
+			-- It's a valid coin
+			local pushed = buffer.pushItems(peripheral.getName(vault), slot)
+			if pushed > 0 then
+				totalValue = totalValue + (val * pushed)
+				itemsMoved = itemsMoved + pushed
+			end
+		else
+			-- Optional: Eject invalid items? For now we just ignore them
+		end
+	end
+
+	return totalValue, itemsMoved
+end
+
+-- Moves items from Vault -> Buffer based on amount
+local function processPhysicalWithdraw(amount)
+	-- 1. Calculate what items we need
+	local coinsNeeded = currency.breakdown(amount)
+	local movedValue = 0
+
+	-- 2. Find and move them from vault
+	for _, need in ipairs(coinsNeeded) do
+		local remainingCount = need.count
+
+		-- Scan vault for this specific item
+		for slot, item in pairs(vault.list()) do
+			if item.name == need.coin.mod_id then
+				local limit = math.min(item.count, remainingCount)
+				local pushed = vault.pushItems(peripheral.getName(buffer), slot, limit)
+
+				remainingCount = remainingCount - pushed
+				movedValue = movedValue + (pushed * need.coin.value)
+
+				if remainingCount <= 0 then
+					break
+				end
+			end
+		end
+
+		if remainingCount > 0 then
+			return false, "Vault low on " .. need.coin.name
+		end
+	end
+
+	return true, movedValue
+end
+
+-- === AUTH HELPER ===
 local function loginUser(username)
 	message = "Connecting..."
-	-- Try to get existing user
 	local ok, data = bank.getUser(username)
 
 	if not ok then
-		-- If user not found (404), try creating them
 		if data == "User not found" or data == "Resource not found" then
 			message = "Creating Account..."
 			ok, data = bank.createUser(username)
@@ -52,14 +120,13 @@ local function loginUser(username)
 
 	if ok then
 		currentUser = {
-			username = data.username or username, -- Fallback if API doesn't return username
+			username = data.username or username,
 			balance = data.balance,
 		}
 		state = "MENU"
 		message = ""
 	else
 		state = "IDLE"
-		-- Show error on idle screen briefly?
 		print("Login Error: " .. tostring(data))
 	end
 end
@@ -74,49 +141,10 @@ local function refreshBalance()
 	end
 end
 
--- === KEYPAD LOGIC ===
-local function appendInput(digit)
-	local newVal = (inputAmount * 10) + digit
-	if newVal < 10000000 then -- Visual cap
-		inputAmount = newVal
-	end
-end
-
 -- === UI RENDERER ===
 local function drawCentered(y, text, fg, bg)
 	local x = math.floor((w - #text) / 2)
 	layers.ui:addLabel(x, y, text, fg, bg)
-end
-
-local function drawKeypad(cx, cy, onConfirm)
-	local btnW, btnH = 5, 3
-	local gap = 1
-	local startX = cx - math.floor((3 * btnW + 2 * gap) / 2)
-	local startY = cy
-
-	local grid = { { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 } }
-
-	for r, row in ipairs(grid) do
-		for c, val in ipairs(row) do
-			local bx = startX + (c - 1) * (btnW + gap)
-			local by = startY + (r - 1) * (btnH + gap)
-			layers.ui:addButton(bx, by, btnW, btnH, tostring(val), colors.gray, colors.white, function()
-				appendInput(val)
-			end)
-		end
-	end
-
-	local by = startY + 3 * (btnH + gap)
-	-- Zero
-	layers.ui:addButton(startX + (btnW + gap), by, btnW, btnH, "0", colors.gray, colors.white, function()
-		appendInput(0)
-	end)
-	-- Clear
-	layers.ui:addButton(startX, by, btnW, btnH, "C", colors.red, colors.white, function()
-		inputAmount = 0
-	end)
-	-- Confirm
-	layers.ui:addButton(startX + 2 * (btnW + gap), by, btnW, btnH, "OK", colors.green, colors.white, onConfirm)
 end
 
 local function updateUI()
@@ -125,10 +153,10 @@ local function updateUI()
 	box.fill(colors.black)
 
 	if state == "IDLE" then
-		drawCentered(h / 2 - 2, "WELCOME TO THE CASINO", colors.yellow, colors.black)
+		drawCentered(h / 2 - 2, "CASINO ATM", colors.yellow, colors.black)
 		drawCentered(h / 2, "CLICK BLOCK TO LOGIN", colors.white, colors.black)
 		if message ~= "" then
-			drawCentered(h / 2 + 4, message, colors.lightGray, colors.black)
+			drawCentered(h / 2 + 4, message, colors.red, colors.black)
 		end
 	elseif state == "MENU" then
 		layers.ui:addLabel(2, 2, "USER: " .. currentUser.username, colors.white, colors.black)
@@ -136,62 +164,104 @@ local function updateUI()
 		drawCentered(6, "$" .. tostring(currentUser.balance), colors.yellow, colors.black)
 
 		if message ~= "" then
-			drawCentered(8, message, colors.red, colors.black)
+			drawCentered(8, message, colors.cyan, colors.black)
 		end
 
-		local btnW = 14
+		local btnW = 18
 		local cx = math.floor(w / 2 - btnW / 2)
 
-		layers.ui:addButton(cx, 12, btnW, 3, "DEPOSIT", colors.green, colors.white, function()
-			state = "DEPOSIT"
-			inputAmount = 0
-			message = ""
+		layers.ui:addButton(cx, 11, btnW, 3, "DEPOSIT ALL", colors.green, colors.white, function()
+			if processing then
+				return
+			end
+			processing = true
+			message = "Scanning items..."
+			updateUI() -- Update screen immediately
+
+			local val, count = processPhysicalDeposit()
+
+			if val > 0 then
+				local success, err = bank.deposit(currentUser.username, val)
+				if success then
+					refreshBalance()
+					message = "Deposited $" .. val
+				else
+					message = "API Error: " .. tostring(err)
+					-- Ideally move items back here, but simplified for now
+				end
+			else
+				message = "No valid coins found."
+			end
+			processing = false
 		end)
 
-		layers.ui:addButton(cx, 16, btnW, 3, "WITHDRAW", colors.orange, colors.black, function()
+		layers.ui:addButton(cx, 15, btnW, 3, "WITHDRAW...", colors.orange, colors.black, function()
 			state = "WITHDRAW"
-			inputAmount = 0
 			message = ""
 		end)
 
-		layers.ui:addButton(cx, 22, btnW, 3, "LOGOUT", colors.red, colors.white, function()
+		layers.ui:addButton(cx, 21, btnW, 3, "LOGOUT", colors.red, colors.white, function()
 			state = "IDLE"
 			currentUser = nil
 			message = ""
 		end)
-	elseif state == "DEPOSIT" or state == "WITHDRAW" then
-		local title = state == "DEPOSIT" and "DEPOSIT AMOUNT" or "WITHDRAW AMOUNT"
-		drawCentered(3, title, colors.white, colors.black)
-
-		local col = state == "DEPOSIT" and colors.green or colors.orange
-		drawCentered(5, "$" .. tostring(inputAmount), col, colors.black)
-
+	elseif state == "WITHDRAW" then
+		drawCentered(3, "Select Amount", colors.white, colors.black)
 		if message ~= "" then
-			drawCentered(7, message, colors.red, colors.black)
+			drawCentered(5, message, colors.red, colors.black)
 		end
 
-		drawKeypad(math.floor(w / 2), 9, function()
-			if inputAmount <= 0 then
-				return
-			end
-			message = "Processing..."
-			updateUI() -- Force render
+		local amounts = { 10, 50, 100, 500, 1000, 5000 }
 
-			local success, err
-			if state == "DEPOSIT" then
-				success, err = bank.deposit(currentUser.username, inputAmount)
-			else
-				success, err = bank.withdraw(currentUser.username, inputAmount)
-			end
+		-- Grid for amounts
+		local startX = 3
+		local startY = 7
+		local btnW = 10
+		local gap = 1
 
-			if success then
-				refreshBalance()
-				state = "MENU"
-				message = "Success!"
-			else
-				message = "Error: " .. tostring(err.message or err)
-			end
-		end)
+		for i, amt in ipairs(amounts) do
+			local col = (i - 1) % 2
+			local row = math.floor((i - 1) / 2)
+
+			local x = math.floor(w / 2) + (col == 0 and -(btnW + 1) or 1)
+			local y = startY + (row * 4)
+
+			layers.ui:addButton(x, y, btnW, 3, "$" .. amt, colors.gray, colors.white, function()
+				if processing then
+					return
+				end
+				processing = true
+				message = "Dispensing..."
+				updateUI()
+
+				-- 1. Check API Balance first
+				if currentUser.balance < amt then
+					message = "Insufficient funds!"
+					processing = false
+					return
+				end
+
+				-- 2. Try moving items
+				local moved, valOrErr = processPhysicalWithdraw(amt)
+
+				if moved then
+					-- 3. Deduct from Bank
+					local success, apiErr = bank.withdraw(currentUser.username, amt)
+					if success then
+						refreshBalance()
+						state = "MENU"
+						message = "Withdrawn $" .. amt
+					else
+						message = "API Error: " .. tostring(apiErr)
+						-- Items dispensed but API failed.
+						-- In real world, log this critical error.
+					end
+				else
+					message = "ATM Empty: " .. tostring(valOrErr)
+				end
+				processing = false
+			end)
+		end
 
 		layers.ui:addButton(2, h - 4, 8, 3, "BACK", colors.red, colors.white, function()
 			state = "MENU"
@@ -203,7 +273,7 @@ local function updateUI()
 	box.render()
 end
 
--- === EVENT LOOPS ===
+-- === LOOPS ===
 local function loopClicks()
 	while true do
 		local event, username = os.pullEvent("playerClick")

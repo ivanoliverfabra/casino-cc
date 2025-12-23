@@ -20,83 +20,100 @@ local api = {}
 
 --- @type Coin[]
 local COINS = {
-  { mod_id = "numismatics:sun", value = 4096, name = "Iridium Coin" },
-  { mod_id = "numismatics:crown", value = 512, name = "Gold Coin" },
-  { mod_id = "numismatics:cog", value = 64, name = "Brass Coin" },
-  { mod_id = "numismatics:sprocket", value = 16, name = "Iron Coin" },
-  { mod_id = "numismatics:bevel", value = 8, name = "Zinc Coin" },
-  { mod_id = "numismatics:spur", value = 1, name = "Copper Coin" },
+	{ mod_id = "numismatics:sun", value = 4096, name = "Iridium Coin" },
+	{ mod_id = "numismatics:crown", value = 512, name = "Gold Coin" },
+	{ mod_id = "numismatics:cog", value = 64, name = "Brass Coin" },
+	{ mod_id = "numismatics:sprocket", value = 16, name = "Iron Coin" },
+	{ mod_id = "numismatics:bevel", value = 8, name = "Zinc Coin" },
+	{ mod_id = "numismatics:spur", value = 1, name = "Copper Coin" },
 }
 
 api.COINS = COINS
 
+--- @param itemId string
+--- @return number
+function api.getValue(itemId)
+	for _, coin in ipairs(COINS) do
+		if coin.mod_id == itemId then
+			return coin.value
+		end
+	end
+	return 0
+end
+
 --- @param amount number
 --- @return CurrencyItem[]
 function api.breakdown(amount)
-  local result = {}
-  local remaining = amount
+	local result = {}
+	local remaining = amount
 
-  for _, coin in ipairs(COINS) do
-    if remaining >= coin.value then
-      local count = math.floor(remaining / coin.value)
-      table.insert(result, {
-        coin = coin,
-        count = count,
-      })
-      remaining = remaining % coin.value
-    end
-  end
+	table.sort(COINS, function(a, b)
+		return a.value > b.value
+	end)
 
-  return result
+	for _, coin in ipairs(COINS) do
+		if remaining >= coin.value then
+			local count = math.floor(remaining / coin.value)
+			if count > 0 then
+				table.insert(result, {
+					coin = coin,
+					count = count,
+				})
+				remaining = remaining % coin.value
+			end
+		end
+	end
+
+	return result
 end
 
 --- @param amount number
 --- @return string
 function api.format(amount)
-  if amount == 0 then
-    return "0 Copper Coins"
-  end
+	if amount == 0 then
+		return "0 Copper Coins"
+	end
 
-  local parts = api.breakdown(amount)
-  local strParts = {}
+	local parts = api.breakdown(amount)
+	local strParts = {}
 
-  for _, item in ipairs(parts) do
-    table.insert(strParts, item.count .. " " .. item.coin.name)
-  end
+	for _, item in ipairs(parts) do
+		table.insert(strParts, item.count .. " " .. item.coin.name)
+	end
 
-  return table.concat(strParts, ", ")
+	return table.concat(strParts, ", ")
 end
 
 --- @param initialBalance number?
 --- @return Wallet
 function api.newWallet(initialBalance)
-  --- @type Wallet
-  local wallet = {
-    balance = initialBalance or 0,
-  }
+	--- @type Wallet
+	local wallet = {
+		balance = initialBalance or 0,
+	}
 
-  function wallet:add(amount)
-    self.balance = self.balance + amount
-    return self.balance
-  end
+	function wallet:add(amount)
+		self.balance = self.balance + amount
+		return self.balance
+	end
 
-  function wallet:remove(amount)
-    if self.balance >= amount then
-      self.balance = self.balance - amount
-      return true
-    end
-    return false
-  end
+	function wallet:remove(amount)
+		if self.balance >= amount then
+			self.balance = self.balance - amount
+			return true
+		end
+		return false
+	end
 
-  function wallet:get()
-    return self.balance
-  end
+	function wallet:get()
+		return self.balance
+	end
 
-  function wallet:getFormatted()
-    return api.format(self.balance)
-  end
+	function wallet:getFormatted()
+		return api.format(self.balance)
+	end
 
-  return wallet
+	return wallet
 end
 
 return api
