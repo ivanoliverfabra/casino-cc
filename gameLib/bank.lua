@@ -29,7 +29,7 @@ local function request(method, endpoint, body, requireAuth)
 	end
 
 	local url = CONFIG.url .. endpoint
-	local bodyStr = body and textutils.serializeJSON(body) or nil
+	local bodyStr = body and textutils.serializeJSON(body) or ""
 
 	-- CC's http.post handles both POST and custom bodies, http.get is for GET
 	local response, err, errResponse
