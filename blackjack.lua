@@ -272,7 +272,10 @@ local function updateUI(revealDealer)
 				colors.black,
 				function()
 					state = "BETTING"
-					currentBet = 0 -- Reset bet for next round
+					-- Persist bet but check wallet bounds
+					if currentBet > wallet:get() then
+						currentBet = wallet:get()
+					end
 				end
 			)
 		end
@@ -308,7 +311,10 @@ while true do
 			end
 		elseif state == "GAMEOVER" and ev[2] == keys.enter then
 			state = "BETTING"
-			currentBet = 0
+			-- Persist bet on Enter key too
+			if currentBet > wallet:get() then
+				currentBet = wallet:get()
+			end
 		elseif state == "BETTING" then
 			-- Physical keyboard support for betting
 			if ev[2] >= keys.zero and ev[2] <= keys.nine then
