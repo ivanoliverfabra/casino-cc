@@ -251,16 +251,17 @@ local function updateUI()
 					if success then
 						refreshBalance()
 						state = "MENU"
+
 						if dispensedAmount < amt then
-							message = "ATM Low. Dispensed $" .. dispensedAmount
+							message = "Dispensed $" .. dispensedAmount .. " (Insufficient stock)"
 						else
-							message = "Withdrawn $" .. dispensedAmount
+							message = "Dispensed $" .. dispensedAmount
 						end
 					else
-						message = "API Error: " .. tostring(apiErr)
+						message = "Dispense Error: Could not dispense funds."
 					end
 				else
-					message = "ATM Empty."
+					message = "API Error: " .. tostring(apiErr.message or apiErr)
 				end
 				processing = false
 			end)
